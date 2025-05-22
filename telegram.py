@@ -154,6 +154,9 @@ class TelegramReply(TelegramSend):
         discussion_message_id = None
         offset = -1
         for _ in range(0, 30):
+            if discussion_message_id:
+                break
+
             r1_1 = requests.get(
                 f"https://api.telegram.org/bot{bot_token}/getUpdates",
                 params={"offset": offset},
@@ -164,11 +167,8 @@ class TelegramReply(TelegramSend):
                 if not msg:
                     continue
 
-                print(reply_to)
-                print(msg.get("forward_from_message_id"))
                 if msg.get("forward_from_message_id") == reply_to:
                     discussion_message_id = msg["message_id"]
-                    break
 
             offset = max(update["update_id"], offset)
             time.sleep(1)
