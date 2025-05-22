@@ -10,7 +10,6 @@ import requests
 from PIL import Image
 from torch import Tensor
 
-ImageCtx = Tuple[Tensor, Any]  # what ComfyUI gives us
 MediaList = List[Dict[str, str]]
 FileDict = Dict[str, io.BytesIO]
 TelegramMedia = Tuple[MediaList, FileDict]
@@ -39,21 +38,22 @@ class TelegramSend:
     RETURN_NAMES = ("message_id",)
     FUNCTION = "run"
     CATEGORY = "api/telegram"
+    OUTPUT_NODE = True
 
     def run(
         self,
         bot_token: str,
         channel_id: str,
-        image_1: Optional[ImageCtx] = None,
-        image_2: Optional[ImageCtx] = None,
-        image_3: Optional[ImageCtx] = None,
-        image_4: Optional[ImageCtx] = None,
-        image_5: Optional[ImageCtx] = None,
+        image_1: Optional[Tensor] = None,
+        image_2: Optional[Tensor] = None,
+        image_3: Optional[Tensor] = None,
+        image_4: Optional[Tensor] = None,
+        image_5: Optional[Tensor] = None,
         caption: str = "",
         as_document: bool = False,
     ) -> Tuple[int]:
-        context_list = (image_1, image_2, image_3, image_4, image_5)
-        tensors: List[Any] = [x[0] for x in context_list if x]
+        combined_tensors = (image_1, image_2, image_3, image_4, image_5)
+        tensors = [x[0] for x in combined_tensors if x is not None]
 
         if not tensors:
             raise ValueError("TelegramSend: Nothing to send")
@@ -140,16 +140,38 @@ class TelegramReply(TelegramSend):
         bot_token: str,
         chat_id: str,
         reply_to: int,
-        image_1: Optional[ImageCtx] = None,
-        image_2: Optional[ImageCtx] = None,
-        image_3: Optional[ImageCtx] = None,
-        image_4: Optional[ImageCtx] = None,
-        image_5: Optional[ImageCtx] = None,
+        image_1: Optional[Tensor] = None,
+        image_2: Optional[Tensor] = None,
+        image_3: Optional[Tensor] = None,
+        image_4: Optional[Tensor] = None,
+        image_5: Optional[Tensor] = None,
         text: str = "",
         as_document: bool = False,
     ) -> Dict[str, Any]:
-        context_list = (image_1, image_2, image_3, image_4, image_5)
-        tensors: List[Any] = [x[0] for x in context_list if x]
+        combined_tensors = (image_1, image_2, image_3, image_4, image_5)
+        tensors = [x[0] for x in combined_tensors if x is not None]
+
+        discussion_message_id = None
+        offset = -1
+        for _ in range(0, 30):
+            r1_1 = requests.get(
+                f"https://api.telegram.org/bot{bot_token}/getUpdates",
+                params={"offset": offset},
+            )
+            updates = r1_1.json()["result"]
+            for update in updates:
+                msg = update.get("message", {})
+                if not msg:
+                    continue
+
+                print(reply_to)
+                print(msg.get("forward_from_message_id"))
+                if msg.get("forward_from_message_id") == reply_to:
+                    discussion_message_id = msg["message_id"]
+                    break
+
+            offset = max(update["update_id"], offset)
+            time.sleep(1)
 
         if tensors:
             media, files = self._tensors_to_media_group(tensors, text, as_document)
@@ -157,7 +179,7 @@ class TelegramReply(TelegramSend):
                 f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
                 data={
                     "chat_id": chat_id,
-                    "reply_to_message_id": reply_to,
+                    "reply_to_message_id": discussion_message_id,
                     "allow_sending_without_reply": True,
                     "media": json.dumps(media, ensure_ascii=False),
                 },
@@ -172,7 +194,7 @@ class TelegramReply(TelegramSend):
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                 data={
                     "chat_id": chat_id,
-                    "reply_to_message_id": reply_to,
+                    "reply_to_message_id": discussion_message_id,
                     "allow_sending_without_reply": True,
                     "text": text,
                     "parse_mode": "HTML",
@@ -187,9 +209,3 @@ class TelegramReply(TelegramSend):
     @classmethod
     def IS_CHANGED(cls, *_: Any, **__: Any) -> float:
         return time.time()
-
-
-NODE_CLASS_MAPPINGS: Dict[str, Any] = {
-    "TelegramSend": TelegramSend,
-    "TelegramReply": TelegramReply,
-}
