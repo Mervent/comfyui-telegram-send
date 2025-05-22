@@ -190,7 +190,7 @@ class TelegramReply(TelegramSend):
                 timeout=60,
             )
             resp.raise_for_status()
-            return (reply_to_message_id, resp.json()["result"]["message_id"])
+            return (reply_to_message_id, resp.json()["result"][0]["message_id"])
 
         if text.strip():
             resp = requests.post(
@@ -205,7 +205,7 @@ class TelegramReply(TelegramSend):
                 timeout=60,
             )
             resp.raise_for_status()
-            return (reply_to_message_id, resp.json()["result"]["message_id"])
+            return (reply_to_message_id, resp.json()["result"][0]["message_id"])
 
         raise ValueError("TelegramReply: Nothing to send")
 
