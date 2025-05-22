@@ -127,6 +127,7 @@ class TelegramReply(TelegramSend):
                 "image_4": ("IMAGE",),
                 "image_5": ("IMAGE",),
                 "text": ("STRING",),
+                "reply_to_message_id": ("INT",),
                 "as_document": ("BOOLEAN", {"default": False, "forceInput": False}),
             },
         }
@@ -134,12 +135,15 @@ class TelegramReply(TelegramSend):
     RETURN_TYPES = ()
     FUNCTION = "run"
     CATEGORY = "api/telegram"
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("reply_to_message_id", "reply_id")
 
     def run(
         self,
         bot_token: str,
         chat_id: str,
         reply_to: int,
+        reply_to_message_id: Optional[int] = None,
         image_1: Optional[Tensor] = None,
         image_2: Optional[Tensor] = None,
         image_3: Optional[Tensor] = None,
@@ -147,14 +151,13 @@ class TelegramReply(TelegramSend):
         image_5: Optional[Tensor] = None,
         text: str = "",
         as_document: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> Tuple[int, int]:
         combined_tensors = (image_1, image_2, image_3, image_4, image_5)
         tensors = [x[0] for x in combined_tensors if x is not None]
 
-        discussion_message_id = None
         offset = -1
         for _ in range(0, 30):
-            if discussion_message_id:
+            if reply_to_message_id:
                 break
 
             r1_1 = requests.get(
@@ -168,7 +171,7 @@ class TelegramReply(TelegramSend):
                     continue
 
                 if msg.get("forward_from_message_id") == reply_to:
-                    discussion_message_id = msg["message_id"]
+                    reply_to_message_id = msg["message_id"]
 
             offset = max(update["update_id"], offset)
             time.sleep(1)
@@ -179,7 +182,7 @@ class TelegramReply(TelegramSend):
                 f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
                 data={
                     "chat_id": chat_id,
-                    "reply_to_message_id": discussion_message_id,
+                    "reply_to_message_id": reply_to_message_id,
                     "allow_sending_without_reply": True,
                     "media": json.dumps(media, ensure_ascii=False),
                 },
@@ -187,14 +190,14 @@ class TelegramReply(TelegramSend):
                 timeout=60,
             )
             resp.raise_for_status()
-            return {}
+            return (reply_to_message_id, resp.json()["result"]["message_id"])
 
         if text.strip():
             resp = requests.post(
                 f"https://api.telegram.org/bot{bot_token}/sendMessage",
                 data={
                     "chat_id": chat_id,
-                    "reply_to_message_id": discussion_message_id,
+                    "reply_to_message_id": reply_to_message_id,
                     "allow_sending_without_reply": True,
                     "text": text,
                     "parse_mode": "HTML",
@@ -202,7 +205,7 @@ class TelegramReply(TelegramSend):
                 timeout=60,
             )
             resp.raise_for_status()
-            return {}
+            return (reply_to_message_id, resp.json()["result"]["message_id"])
 
         raise ValueError("TelegramReply: Nothing to send")
 
