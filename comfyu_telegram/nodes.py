@@ -6,8 +6,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import requests
+import torch
 from PIL import Image
 from torch import Tensor
 
@@ -17,6 +17,9 @@ TelegramMedia = Tuple[MediaList, FileDict]
 
 
 class TelegramSend:
+    def __init__(self, force_cpu: bool = False):
+        self.force_cpu = force_cpu
+
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
         return {
@@ -64,37 +67,41 @@ class TelegramSend:
         }
 
         if use_async:
-            resp = self.send_async(bot_token, data, files)
+            self.call_async(self.send_media_group, args=(bot_token, data, files))
             return (-1,)
         else:
-            resp = self.send(bot_token, data, files)
-            return (resp.json()["result"][0]["message_id"],)
+            resp = self.send_media_group(bot_token, data, files)
+            return (resp["result"][0]["message_id"],)
 
-    def send_async(
+    def call_async(
         self,
-        bot_token: str,
-        data: dict,
-        files: FileDict,
+        callable,
+        args,
     ) -> threading.Thread:
-        args = (bot_token, data, files)
-        thread = threading.Thread(target=self.send, args=args, daemon=True)
+        thread = threading.Thread(target=callable, args=args, daemon=True)
         thread.start()
         return thread
 
-    def send(self, bot_token: str, data: dict, files: FileDict):
-        resp = requests.post(
+    def send_media_group(self, bot_token: str, data: dict, files: FileDict):
+        return self._make_request(
             f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
             data=data,
             files=files,
             timeout=60,
         )
+
+    def send_message(self, bot_token: str, data: dict):
+        return self._make_request(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage", data=data
+        )
+
+    def _make_request(self, url, **kwargs) -> dict:
+        resp = requests.post(url, **kwargs)
+        resp.raise_for_status()
         return resp.json()
 
     def _get_tensors(self, *args: Optional[Tensor]) -> List[Tensor]:
-        tensors = [x[0] for x in args if x is not None]
-        if not tensors:
-            raise ValueError("TelegramSend: Nothing to send")
-        return tensors
+        return [x[0] for x in args if x is not None]
 
     def _tensors_to_media_group(
         self,
@@ -122,11 +129,35 @@ class TelegramSend:
 
         return media, files
 
-    @staticmethod
-    def _tensor_to_buffer(tensor: Tensor) -> io.BytesIO:
-        arr = (tensor.cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
+    def _tensor_to_buffer(self, t: Tensor):
+        # 1)  Quantise on-GPU, keep CHW
+        u8 = t.mul(255).clamp_(0, 255).to(torch.uint8)
+        if u8.shape[0] not in (1, 3):  # CHW guarantee
+            u8 = u8.permute(2, 0, 1).contiguous()
+
+        # 2)  Asynchronous copy into a pinned host buffer
+        h = torch.empty_like(u8, device="cpu", pin_memory=True)
+        h.copy_(u8, non_blocking=True)  # no stream-wide sync
+
+        # 3)  ZERO-COPY wrap: Image.frombuffer just *views* the memory
+        w, h_px = h.shape[2], h.shape[1]
+
+        # Handle MPS tensor issue on Mac by moving to CPU before any operations if needed
+        if self.force_cpu:
+            h = h.cpu()
+
+        im = Image.frombuffer(
+            "RGB",
+            (w, h_px),
+            h.permute(1, 2, 0).contiguous().numpy(),  # expose a C-contiguous view
+            "raw",
+            "RGB",
+            0,
+            1,  # <-- no extra copy
+        )
+
         buf = io.BytesIO()
-        Image.fromarray(arr).save(buf, format="PNG")
+        im.save(buf, format="PNG", compress_level=1, optimize=False)
         buf.seek(0)
         return buf
 
@@ -157,8 +188,8 @@ class TelegramReply(TelegramSend):
             },
         }
 
-    RETURN_TYPES = ("INT", )
-    RETURN_NAMES = ("reply_to_message_id",)
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("reply_to_message_id", "reply_id")
     FUNCTION = "run"
     CATEGORY = "api/telegram"
     OUTPUT_NODE = True
@@ -177,7 +208,7 @@ class TelegramReply(TelegramSend):
         text: str = "",
         as_document: bool = False,
         use_async: bool = True,
-    ) -> Tuple[int]:
+    ) -> Tuple[int, int]:
         if not reply_to_message_id:
             reply_to_message_id = self._find_reply_to_message_id(bot_token, reply_to)
 
@@ -185,31 +216,34 @@ class TelegramReply(TelegramSend):
             raise ValueError(f"Telegram: Could not find reply to message {reply_to}")
 
         tensors = self._get_tensors(image_1, image_2, image_3, image_4, image_5)
+        media, files = self._tensors_to_media_group(tensors, text, as_document)
         if tensors:
-            media, files = self._tensors_to_media_group(tensors, text, as_document)
             data = {
                 "chat_id": chat_id,
                 "reply_to_message_id": reply_to_message_id,
                 "allow_sending_without_reply": True,
                 "media": json.dumps(media, ensure_ascii=False),
             }
-        elif text.strip():
-            data = {
-                "chat_id": chat_id,
-                "reply_to_message_id": reply_to_message_id,
-                "allow_sending_without_reply": True,
-                "text": text,
-                "parse_mode": "HTML",
-            }
-        else:
-            raise ValueError("Telegram: Nothing to send")
+            if use_async:
+                self.call_async(self.send_media_group, args=(bot_token, data, files))
+                return (reply_to_message_id, -1)
+            else:
+                resp = self.send_media_group(bot_token, data, files)
+                return (reply_to_message_id, resp["result"][0]["message_id"])
 
+        data = {
+            "chat_id": chat_id,
+            "reply_to_message_id": reply_to_message_id,
+            "allow_sending_without_reply": True,
+            "text": text,
+            "parse_mode": "HTML",
+        }
         if use_async:
-            self.send_async(bot_token, data, files)
-            return (reply_to_message_id,)
+            self.call_async(self.send_message, args=(bot_token, data))
+            return (reply_to_message_id, -1)
         else:
-            self.send(bot_token, data, files)
-            return (reply_to_message_id,)
+            resp = self.send_message(bot_token, data)
+            return (reply_to_message_id, resp["result"]["message_id"])
 
     def _find_reply_to_message_id(self, bot_token: str, reply_to: int) -> Optional[int]:
         offset = -1
