@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,6 +32,7 @@ class TelegramSend:
                 "image_5": ("IMAGE",),
                 "caption": ("STRING",),
                 "as_document": ("BOOLEAN", {"default": False, "forceInput": False}),
+                "use_async": ("BOOLEAN", {"default": True, "forceInput": False}),
             },
         }
 
@@ -51,25 +53,48 @@ class TelegramSend:
         image_5: Optional[Tensor] = None,
         caption: str = "",
         as_document: bool = False,
+        use_async: bool = True,
     ) -> Tuple[int]:
-        combined_tensors = (image_1, image_2, image_3, image_4, image_5)
-        tensors = [x[0] for x in combined_tensors if x is not None]
-
-        if not tensors:
-            raise ValueError("TelegramSend: Nothing to send")
-
+        tensors = self._get_tensors(image_1, image_2, image_3, image_4, image_5)
         media, files = self._tensors_to_media_group(tensors, caption, as_document)
+
+        data = {
+            "chat_id": channel_id,
+            "media": json.dumps(media, ensure_ascii=False),
+        }
+
+        if use_async:
+            resp = self.send_async(bot_token, data, files)
+            return (-1,)
+        else:
+            resp = self.send(bot_token, data, files)
+            return (resp.json()["result"][0]["message_id"],)
+
+    def send_async(
+        self,
+        bot_token: str,
+        data: dict,
+        files: FileDict,
+    ) -> threading.Thread:
+        args = (bot_token, data, files)
+        thread = threading.Thread(target=self.send, args=args, daemon=True)
+        thread.start()
+        return thread
+
+    def send(self, bot_token: str, data: dict, files: FileDict):
         resp = requests.post(
             f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
-            data={
-                "chat_id": channel_id,
-                "media": json.dumps(media, ensure_ascii=False),
-            },
+            data=data,
             files=files,
             timeout=60,
         )
-        resp.raise_for_status()
-        return (resp.json()["result"][0]["message_id"],)
+        return resp.json()
+
+    def _get_tensors(self, *args: Optional[Tensor]) -> List[Tensor]:
+        tensors = [x[0] for x in args if x is not None]
+        if not tensors:
+            raise ValueError("TelegramSend: Nothing to send")
+        return tensors
 
     def _tensors_to_media_group(
         self,
@@ -105,9 +130,8 @@ class TelegramSend:
         buf.seek(0)
         return buf
 
-    # ------------------------------------------------------ cache break ——
     @classmethod
-    def IS_CHANGED(cls, *_: Any, **__: Any) -> float:  # pragma: no cover
+    def IS_CHANGED(cls, *_: Any, **__: Any) -> float:
         return time.time()
 
 
@@ -129,14 +153,15 @@ class TelegramReply(TelegramSend):
                 "text": ("STRING",),
                 "reply_to_message_id": ("INT",),
                 "as_document": ("BOOLEAN", {"default": False, "forceInput": False}),
+                "use_async": ("BOOLEAN", {"default": True, "forceInput": False}),
             },
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("INT", )
+    RETURN_NAMES = ("reply_to_message_id",)
     FUNCTION = "run"
     CATEGORY = "api/telegram"
-    RETURN_TYPES = ("INT", "INT")
-    RETURN_NAMES = ("reply_to_message_id", "reply_id")
+    OUTPUT_NODE = True
 
     def run(
         self,
@@ -151,63 +176,56 @@ class TelegramReply(TelegramSend):
         image_5: Optional[Tensor] = None,
         text: str = "",
         as_document: bool = False,
-    ) -> Tuple[int, int]:
-        combined_tensors = (image_1, image_2, image_3, image_4, image_5)
-        tensors = [x[0] for x in combined_tensors if x is not None]
+        use_async: bool = True,
+    ) -> Tuple[int]:
+        if not reply_to_message_id:
+            reply_to_message_id = self._find_reply_to_message_id(bot_token, reply_to)
 
+        if not reply_to_message_id:
+            raise ValueError(f"Telegram: Could not find reply to message {reply_to}")
+
+        tensors = self._get_tensors(image_1, image_2, image_3, image_4, image_5)
+        if tensors:
+            media, files = self._tensors_to_media_group(tensors, text, as_document)
+            data = {
+                "chat_id": chat_id,
+                "reply_to_message_id": reply_to_message_id,
+                "allow_sending_without_reply": True,
+                "media": json.dumps(media, ensure_ascii=False),
+            }
+        elif text.strip():
+            data = {
+                "chat_id": chat_id,
+                "reply_to_message_id": reply_to_message_id,
+                "allow_sending_without_reply": True,
+                "text": text,
+                "parse_mode": "HTML",
+            }
+        else:
+            raise ValueError("Telegram: Nothing to send")
+
+        if use_async:
+            self.send_async(bot_token, data, files)
+            return (reply_to_message_id,)
+        else:
+            self.send(bot_token, data, files)
+            return (reply_to_message_id,)
+
+    def _find_reply_to_message_id(self, bot_token: str, reply_to: int) -> Optional[int]:
         offset = -1
-        for _ in range(0, 30):
-            if reply_to_message_id:
-                break
-
-            r1_1 = requests.get(
+        for _ in range(30):
+            r = requests.get(
                 f"https://api.telegram.org/bot{bot_token}/getUpdates",
                 params={"offset": offset},
             )
-            updates = r1_1.json()["result"]
-            for update in updates:
-                msg = update.get("message", {})
-                if not msg:
-                    continue
-
+            for upd in r.json()["result"]:
+                msg = upd.get("message", {})
                 if msg.get("forward_from_message_id") == reply_to:
-                    reply_to_message_id = msg["message_id"]
-
-            offset = max(update["update_id"], offset)
+                    return msg["message_id"]
+                offset = max(offset, upd["update_id"])
             time.sleep(1)
 
-        if tensors:
-            media, files = self._tensors_to_media_group(tensors, text, as_document)
-            resp = requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
-                data={
-                    "chat_id": chat_id,
-                    "reply_to_message_id": reply_to_message_id,
-                    "allow_sending_without_reply": True,
-                    "media": json.dumps(media, ensure_ascii=False),
-                },
-                files=files,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            return (reply_to_message_id, resp.json()["result"][0]["message_id"])
-
-        if text.strip():
-            resp = requests.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                data={
-                    "chat_id": chat_id,
-                    "reply_to_message_id": reply_to_message_id,
-                    "allow_sending_without_reply": True,
-                    "text": text,
-                    "parse_mode": "HTML",
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            return (reply_to_message_id, resp.json()["result"]["message_id"])
-
-        raise ValueError("TelegramReply: Nothing to send")
+        return None
 
     @classmethod
     def IS_CHANGED(cls, *_: Any, **__: Any) -> float:
