@@ -1,6 +1,6 @@
 from unittest.mock import Mock
 
-from comfyui_telegram.nodes import TelegramReply
+from ..nodes import TelegramReply
 
 
 class TestTelegramReply:

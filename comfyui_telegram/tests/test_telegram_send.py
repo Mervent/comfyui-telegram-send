@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import torch
 from PIL import Image
 
-from comfyui_telegram.nodes import TelegramSend
+from ..nodes import TelegramSend
 
 
 class TestTelegramSend:

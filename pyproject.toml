@@ -33,7 +33,7 @@ Repository = "https://github.com/mervent/comfyui-telegram"
 Issues = "https://github.com/mervent/comfyui-telegram/issues"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["comfyui_telegram/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
