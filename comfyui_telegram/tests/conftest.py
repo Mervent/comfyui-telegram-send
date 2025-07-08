@@ -28,7 +28,7 @@ def mock_requests(monkeypatch):
     mock.post.side_effect = mock_post
     mock.get.return_value = mock_get_response
 
-    monkeypatch.setattr("comfyu_telegram.nodes.requests", mock)
+    monkeypatch.setattr("comfyui_telegram.nodes.requests", mock)
     return mock
 
 

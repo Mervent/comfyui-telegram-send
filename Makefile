@@ -1,13 +1,15 @@
+APP_NAME := comfyui_telegram
+
 venv:
 	uv venv .venv
 	uv pip install -r pyproject.toml
 
 lint:
-	ruff check ./comfyu_telegram ./tests
-	ty check ./comfyu_telegram ./tests
+	ruff check ${APP_NAME}
+	ty check ${APP_NAME}
 
 format:
-	ruff format ./comfyu_telegram ./tests
+	ruff format ${APP_NAME}
 
 test:
-	pytest -v ./tests/
+	pytest -v ${APP_NAME}

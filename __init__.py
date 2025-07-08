@@ -1,4 +1,4 @@
-from comfyu_telegram.nodes import TelegramReply, TelegramSend
+from comfyui_telegram.nodes import TelegramReply, TelegramSend
 
 NODE_CLASS_MAPPINGS = {
     "TelegramSend": TelegramSend,
