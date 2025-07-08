@@ -3,7 +3,7 @@ name = "comfyui-telegram"
 version = "0.1.0"
 description = "ComfyUI custom node for Telegram integration"
 readme = "CLAUDE.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -23,6 +23,7 @@ dependencies = [
     "pytest-mock>=3.14.1",
     "ruff>=0.12.2",
     "numpy>=2.2.0,<2.3.0",
+    "ty>=0.0.1a14",
 ]
 
 

@@ -4,7 +4,7 @@ import io
 import json
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 import torch
@@ -49,11 +49,11 @@ class TelegramSend:
         self,
         bot_token: str,
         channel_id: str,
-        image_1: Optional[Tensor] = None,
-        image_2: Optional[Tensor] = None,
-        image_3: Optional[Tensor] = None,
-        image_4: Optional[Tensor] = None,
-        image_5: Optional[Tensor] = None,
+        image_1: Optional[List[Tensor]] = None,
+        image_2: Optional[List[Tensor]] = None,
+        image_3: Optional[List[Tensor]] = None,
+        image_4: Optional[List[Tensor]] = None,
+        image_5: Optional[List[Tensor]] = None,
         caption: str = "",
         as_document: bool = False,
         use_async: bool = True,
@@ -75,14 +75,16 @@ class TelegramSend:
 
     def call_async(
         self,
-        callable,
-        args,
+        callable: Callable[..., Any],
+        args: Tuple[Any, ...],
     ) -> threading.Thread:
         thread = threading.Thread(target=callable, args=args, daemon=True)
         thread.start()
         return thread
 
-    def send_media_group(self, bot_token: str, data: dict, files: FileDict):
+    def send_media_group(
+        self, bot_token: str, data: Dict[str, Any], files: FileDict
+    ) -> Dict[str, Any]:
         return self._make_request(
             f"https://api.telegram.org/bot{bot_token}/sendMediaGroup",
             data=data,
@@ -90,22 +92,22 @@ class TelegramSend:
             timeout=60,
         )
 
-    def send_message(self, bot_token: str, data: dict):
+    def send_message(self, bot_token: str, data: Dict[str, Any]) -> Dict[str, Any]:
         return self._make_request(
             f"https://api.telegram.org/bot{bot_token}/sendMessage", data=data
         )
 
-    def _make_request(self, url, **kwargs) -> dict:
+    def _make_request(self, url: str, **kwargs: Any) -> Dict[str, Any]:
         resp = requests.post(url, **kwargs)
         resp.raise_for_status()
         return resp.json()
 
-    def _get_tensors(self, *args: Optional[Tensor]) -> List[Tensor]:
+    def _get_tensors(self, *args: Optional[List[Tensor]]) -> List[Tensor]:
         return [x[0] for x in args if x is not None]
 
     def _tensors_to_media_group(
         self,
-        images: List[Any],
+        images: List[Tensor],
         caption: str,
         as_document: bool,
     ) -> TelegramMedia:
@@ -129,7 +131,7 @@ class TelegramSend:
 
         return media, files
 
-    def _tensor_to_buffer(self, t: Tensor):
+    def _tensor_to_buffer(self, t: Tensor) -> io.BytesIO:
         # 1)  Quantise on-GPU, keep CHW
         u8 = t.mul(255).clamp_(0, 255).to(torch.uint8)
         if u8.shape[0] not in (1, 3):  # CHW guarantee
@@ -200,11 +202,11 @@ class TelegramReply(TelegramSend):
         chat_id: str,
         reply_to: int,
         reply_to_message_id: Optional[int] = None,
-        image_1: Optional[Tensor] = None,
-        image_2: Optional[Tensor] = None,
-        image_3: Optional[Tensor] = None,
-        image_4: Optional[Tensor] = None,
-        image_5: Optional[Tensor] = None,
+        image_1: Optional[List[Tensor]] = None,
+        image_2: Optional[List[Tensor]] = None,
+        image_3: Optional[List[Tensor]] = None,
+        image_4: Optional[List[Tensor]] = None,
+        image_5: Optional[List[Tensor]] = None,
         text: str = "",
         as_document: bool = False,
         use_async: bool = True,

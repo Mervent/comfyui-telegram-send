@@ -6,14 +6,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a ComfyUI custom node plugin that provides Telegram integration for sending images and messages. The plugin allows ComfyUI workflows to send generated images and text to Telegram channels via bot API.
 
+## Development Commands
+
+### Environment Setup
+```bash
+make venv  # Create virtual environment and install dependencies
+```
+
+### Testing
+```bash
+make test      # Run all tests with pytest
+pytest -v ./tests/test_telegram_send.py  # Run single test file
+pytest -v ./tests/test_telegram_reply.py  # Run reply tests
+```
+
+### Code Quality
+```bash
+make lint      # Check code with ruff and ty
+make format    # Format code with ruff
+```
+
 ## Architecture
 
-The codebase consists of two main Python files:
-
-- `telegram.py`: Contains the core functionality with two main classes:
-  - `TelegramSend`: Sends images and media groups to Telegram channels
-  - `TelegramReply`: Replies to specific messages with images or text
-- `__init__.py`: Exports the node classes for ComfyUI integration
+The codebase structure:
+- `comfyu_telegram/nodes.py`: Core functionality with TelegramSend and TelegramReply classes
+- `__init__.py`: ComfyUI node registration and exports
+- `tests/`: Comprehensive test suite with mocked HTTP requests
+- `pyproject.toml`: Python project configuration with dependencies
 
 ## Key Components
 
@@ -30,24 +49,31 @@ The codebase consists of two main Python files:
 - Supports both image and text replies
 - Maintains reply chain functionality
 
-## Development Notes
+## Testing Framework
 
-### Testing
-- No formal test framework is present in this codebase
-- Testing likely requires integration with ComfyUI and actual Telegram bot tokens
+- Uses pytest with comprehensive fixtures in `tests/conftest.py`
+- Mock objects for HTTP requests to avoid actual Telegram API calls
+- Fixtures for sample tensors, images, and API responses
+- Tests cover both synchronous and asynchronous operations
 
-### Dependencies
-- `requests`: HTTP requests to Telegram Bot API
-- `torch`: Tensor operations and GPU optimization
-- `PIL (Pillow)`: Image processing
-- ComfyUI framework (implicit dependency)
+## Dependencies
 
-### Image Processing
+Core dependencies from pyproject.toml:
+- `requests>=2.25.0`: HTTP requests to Telegram Bot API
+- `torch>=1.9.0`: Tensor operations and GPU optimization
+- `Pillow>=8.0.0`: Image processing
+- `numpy>=2.2.0,<2.3.0`: Numerical operations and array handling
+- `pytest>=8.3.5`: Testing framework
+- `pytest-mock>=3.14.1`: Mock objects for testing
+- `ruff>=0.12.2`: Code linting and formatting
+- `ty>=0.0.1a14`: Type checking
+
+## Image Processing
 - Uses optimized tensor-to-image conversion with GPU acceleration
 - Implements zero-copy memory operations for performance
 - Converts tensors to PNG format with minimal compression
 
-### Async Operations
+## Async Operations
 - Uses Python threading for non-blocking Telegram API calls
 - Async operations return -1 as message_id placeholder
 - Daemon threads are used to prevent hanging on exit
@@ -57,3 +83,9 @@ The codebase consists of two main Python files:
 - Requires bot_token and chat_id/channel_id for operations
 - Supports HTML parsing for message formatting
 - Implements error handling with HTTP status checks
+- Reply functionality uses `getUpdates` endpoint to find messages to reply to
+
+## ComfyUI Node Registration
+- Nodes are registered in `__init__.py` via `NODE_CLASS_MAPPINGS`
+- Both nodes are output nodes (`OUTPUT_NODE = True`) for triggering workflows
+- Uses `IS_CHANGED` method returning `time.time()` to ensure re-execution
