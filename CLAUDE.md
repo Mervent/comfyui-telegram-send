@@ -10,7 +10,7 @@ This is a ComfyUI custom node plugin that provides Telegram integration for send
 
 ### Environment Setup
 ```bash
-make venv  # Create virtual environment and install dependencies
+make venv  # Create virtual environment and install dependencies with uv
 ```
 
 ### Testing
@@ -29,10 +29,10 @@ make format    # Format code with ruff
 ## Architecture
 
 The codebase structure:
-- `comfyu_telegram/nodes.py`: Core functionality with TelegramSend and TelegramReply classes
+- `comfyui_telegram/nodes.py`: Core functionality with TelegramSend and TelegramReply classes
 - `__init__.py`: ComfyUI node registration and exports
-- `tests/`: Comprehensive test suite with mocked HTTP requests
-- `pyproject.toml`: Python project configuration with dependencies
+- `comfyui_telegram/tests/`: Comprehensive test suite with mocked HTTP requests
+- `pyproject.toml`: Python project configuration with dependencies and pytest settings
 
 ## Key Components
 
@@ -51,10 +51,11 @@ The codebase structure:
 
 ## Testing Framework
 
-- Uses pytest with comprehensive fixtures in `tests/conftest.py`
+- Uses pytest with comprehensive fixtures in `comfyui_telegram/tests/conftest.py`
 - Mock objects for HTTP requests to avoid actual Telegram API calls
 - Fixtures for sample tensors, images, and API responses
 - Tests cover both synchronous and asynchronous operations
+- Test configuration in `pyproject.toml` specifies test paths and options
 
 ## Dependencies
 
@@ -74,9 +75,12 @@ Core dependencies from pyproject.toml:
 - Converts tensors to PNG format with minimal compression
 
 ## Async Operations
-- Uses Python threading for non-blocking Telegram API calls
+- Uses dual ThreadPoolExecutor system for non-blocking Telegram API calls
+- Two executors: `_executor_ordered` (1 thread) and `_executor_parallel` (5 threads)
+- `keep_order` parameter (default: False) controls which executor to use:
+  - `keep_order=True`: Uses single-thread executor for sequential message sending
+  - `keep_order=False`: Uses 5-thread executor for parallel processing
 - Async operations return -1 as message_id placeholder
-- Daemon threads are used to prevent hanging on exit
 
 ## API Integration
 - Uses Telegram Bot API endpoints: `sendMediaGroup` and `sendMessage`

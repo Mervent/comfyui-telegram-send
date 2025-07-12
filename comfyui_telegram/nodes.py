@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import io
 import json
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
@@ -14,6 +14,13 @@ from torch import Tensor
 MediaList = List[Dict[str, str]]
 FileDict = Dict[str, io.BytesIO]
 TelegramMedia = Tuple[MediaList, FileDict]
+
+_executor_ordered = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="telegram-ordered"
+)
+_executor_parallel = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="telegram-parallel"
+)
 
 
 class TelegramSend:
@@ -36,6 +43,7 @@ class TelegramSend:
                 "caption": ("STRING",),
                 "as_document": ("BOOLEAN", {"default": False, "forceInput": False}),
                 "use_async": ("BOOLEAN", {"default": True, "forceInput": False}),
+                "keep_order": ("BOOLEAN", {"default": False, "forceInput": False}),
             },
         }
 
@@ -57,6 +65,7 @@ class TelegramSend:
         caption: str = "",
         as_document: bool = False,
         use_async: bool = True,
+        keep_order: bool = False,
     ) -> Tuple[int]:
         tensors = self._get_tensors(image_1, image_2, image_3, image_4, image_5)
         media, files = self._tensors_to_media_group(tensors, caption, as_document)
@@ -67,7 +76,11 @@ class TelegramSend:
         }
 
         if use_async:
-            self.call_async(self.send_media_group, args=(bot_token, data, files))
+            self.call_async(
+                self.send_media_group,
+                args=(bot_token, data, files),
+                keep_order=keep_order,
+            )
             return (-1,)
         else:
             resp = self.send_media_group(bot_token, data, files)
@@ -77,10 +90,10 @@ class TelegramSend:
         self,
         callable: Callable[..., Any],
         args: Tuple[Any, ...],
-    ) -> threading.Thread:
-        thread = threading.Thread(target=callable, args=args, daemon=True)
-        thread.start()
-        return thread
+        keep_order: bool = False,
+    ) -> None:
+        executor = _executor_ordered if keep_order else _executor_parallel
+        executor.submit(callable, *args)
 
     def send_media_group(
         self, bot_token: str, data: Dict[str, Any], files: FileDict
@@ -187,6 +200,7 @@ class TelegramReply(TelegramSend):
                 "reply_to_message_id": ("INT",),
                 "as_document": ("BOOLEAN", {"default": False, "forceInput": False}),
                 "use_async": ("BOOLEAN", {"default": True, "forceInput": False}),
+                "keep_order": ("BOOLEAN", {"default": False, "forceInput": False}),
             },
         }
 
@@ -210,6 +224,7 @@ class TelegramReply(TelegramSend):
         text: str = "",
         as_document: bool = False,
         use_async: bool = True,
+        keep_order: bool = False,
     ) -> Tuple[int, int]:
         if not reply_to_message_id:
             reply_to_message_id = self._find_reply_to_message_id(bot_token, reply_to)
@@ -227,7 +242,11 @@ class TelegramReply(TelegramSend):
                 "media": json.dumps(media, ensure_ascii=False),
             }
             if use_async:
-                self.call_async(self.send_media_group, args=(bot_token, data, files))
+                self.call_async(
+                    self.send_media_group,
+                    args=(bot_token, data, files),
+                    keep_order=keep_order,
+                )
                 return (reply_to_message_id, -1)
             else:
                 resp = self.send_media_group(bot_token, data, files)
@@ -241,7 +260,9 @@ class TelegramReply(TelegramSend):
             "parse_mode": "HTML",
         }
         if use_async:
-            self.call_async(self.send_message, args=(bot_token, data))
+            self.call_async(
+                self.send_message, args=(bot_token, data), keep_order=keep_order
+            )
             return (reply_to_message_id, -1)
         else:
             resp = self.send_message(bot_token, data)

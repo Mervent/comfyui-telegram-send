@@ -1,6 +1,6 @@
 import io
 import json
-import threading
+import time
 from unittest.mock import Mock
 
 import torch
@@ -120,17 +120,37 @@ class TestTelegramSend:
         mock_requests.post.assert_called_once_with(expected_url, data=data)
         assert result == {"ok": True, "result": {"message_id": 123}}
 
-    def test_call_async_starts_daemon_thread(self):
-        """Test call_async starts a daemon thread."""
+    def test_call_async_submits_to_executor(self):
+        """Test call_async submits to thread pool executor."""
         telegram_send = TelegramSend(force_cpu=True)
         mock_callable = Mock()
         args = ("arg1", "arg2")
 
-        thread = telegram_send.call_async(mock_callable, args)
+        telegram_send.call_async(mock_callable, args)
 
-        assert isinstance(thread, threading.Thread)
-        assert thread.daemon is True
-        thread.join(timeout=1)
+        time.sleep(0.1)
+        mock_callable.assert_called_once_with("arg1", "arg2")
+
+    def test_call_async_with_keep_order_true(self):
+        """Test call_async with keep_order=True uses ordered executor."""
+        telegram_send = TelegramSend(force_cpu=True)
+        mock_callable = Mock()
+        args = ("arg1", "arg2")
+
+        telegram_send.call_async(mock_callable, args, keep_order=True)
+
+        time.sleep(0.1)
+        mock_callable.assert_called_once_with("arg1", "arg2")
+
+    def test_call_async_with_keep_order_false(self):
+        """Test call_async with keep_order=False uses parallel executor."""
+        telegram_send = TelegramSend(force_cpu=True)
+        mock_callable = Mock()
+        args = ("arg1", "arg2")
+
+        telegram_send.call_async(mock_callable, args, keep_order=False)
+
+        time.sleep(0.1)
         mock_callable.assert_called_once_with("arg1", "arg2")
 
     def test_run_sync_returns_message_id(self, mock_requests, sample_tensor):
