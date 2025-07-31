@@ -6,9 +6,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import cv2
 import requests
 import torch
-from PIL import Image
 from torch import Tensor
 
 MediaList = List[Dict[str, str]]
@@ -154,25 +154,19 @@ class TelegramSend:
         h = torch.empty_like(u8, device="cpu", pin_memory=True)
         h.copy_(u8, non_blocking=True)  # no stream-wide sync
 
-        # 3)  ZERO-COPY wrap: Image.frombuffer just *views* the memory
-        w, h_px = h.shape[2], h.shape[1]
-
         # Handle MPS tensor issue on Mac by moving to CPU before any operations if needed
         if self.force_cpu:
             h = h.cpu()
 
-        im = Image.frombuffer(
-            "RGB",
-            (w, h_px),
-            h.permute(1, 2, 0).contiguous().numpy(),  # expose a C-contiguous view
-            "raw",
-            "RGB",
-            0,
-            1,  # <-- no extra copy
-        )
+        np_img = h.permute(1, 2, 0).contiguous().numpy()
+        enc_src = np_img[..., ::-1]
 
-        buf = io.BytesIO()
-        im.save(buf, format="PNG", compress_level=1, optimize=False)
+        params = [cv2.IMWRITE_PNG_COMPRESSION, 6]
+        ok, enc = cv2.imencode(".png", enc_src, params)
+        if not ok:
+            raise RuntimeError("cv2.imencode failed")
+
+        buf = io.BytesIO(enc.tobytes())
         buf.seek(0)
         return buf
 
