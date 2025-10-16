@@ -110,6 +110,17 @@ class TelegramSend:
             f"https://api.telegram.org/bot{bot_token}/sendMessage", data=data
         )
 
+    def send_document(
+        self, bot_token: str, data: Dict[str, Any], files: FileDict
+    ) -> Dict[str, Any]:
+        """Send document with thumbnail using multipart/form-data"""
+        return self._make_request(
+            f"https://api.telegram.org/bot{bot_token}/sendDocument",
+            data=data,
+            files=files,
+            timeout=60,
+        )
+
     def _make_request(self, url: str, **kwargs: Any) -> Dict[str, Any]:
         resp = requests.post(url, **kwargs)
         resp.raise_for_status()
@@ -161,10 +172,128 @@ class TelegramSend:
         np_img = h.permute(1, 2, 0).contiguous().numpy()
         enc_src = np_img[..., ::-1]
 
-        params = [cv2.IMWRITE_PNG_COMPRESSION, 6]
+        params = [cv2.IMWRITE_PNG_COMPRESSION, 2]
         ok, enc = cv2.imencode(".png", enc_src, params)
         if not ok:
             raise RuntimeError("cv2.imencode failed")
+
+        buf = io.BytesIO(enc.tobytes())
+        buf.seek(0)
+        return buf
+
+    @classmethod
+    def IS_CHANGED(cls, *_: Any, **__: Any) -> float:
+        return time.time()
+
+
+class TelegramSendDocument(TelegramSend):
+    @classmethod
+    def INPUT_TYPES(cls) -> Dict[str, Any]:
+        return {
+            "required": {
+                "bot_token": ("STRING",),
+                "channel_id": ("STRING",),
+                "image": ("IMAGE",),
+            },
+            "optional": {
+                "caption": ("STRING",),
+                "use_async": ("BOOLEAN", {"default": True, "forceInput": False}),
+                "keep_order": ("BOOLEAN", {"default": False, "forceInput": False}),
+            },
+        }
+
+    RETURN_TYPES = ("INT",)
+    RETURN_NAMES = ("message_id",)
+    FUNCTION = "run"
+    CATEGORY = "api/telegram"
+    OUTPUT_NODE = True
+
+    def run(
+        self,
+        bot_token: str,
+        channel_id: str,
+        image: List[Tensor],
+        caption: str = "",
+        use_async: bool = True,
+        keep_order: bool = False,
+    ) -> Tuple[int]:
+        tensor = image[0]
+
+        doc_buffer = self._tensor_to_buffer(tensor)
+        thumb_buffer = self._generate_thumbnail(tensor)
+
+        data = {
+            "chat_id": channel_id,
+            "document": "attach://image.png",
+            "thumbnail": "attach://thumbnail.jpg",
+        }
+
+        if caption:
+            data["caption"] = caption
+            data["parse_mode"] = "HTML"
+
+        files = {
+            "image.png": doc_buffer,
+            "thumbnail.jpg": thumb_buffer,
+        }
+
+        if use_async:
+            self.call_async(
+                self.send_document,
+                args=(bot_token, data, files),
+                keep_order=keep_order,
+            )
+            return (-1,)
+        else:
+            resp = self.send_document(bot_token, data, files)
+            return (resp["result"]["message_id"],)
+
+    def _generate_thumbnail(self, tensor: Tensor) -> io.BytesIO:
+        """Generate JPEG thumbnail from image tensor, max 320x320, <200KB"""
+        u8 = tensor.mul(255).clamp_(0, 255).to(torch.uint8)
+        if u8.shape[0] not in (1, 3):  # CHW guarantee
+            u8 = u8.permute(2, 0, 1).contiguous()
+
+        h = torch.empty_like(u8, device="cpu", pin_memory=True)
+        h.copy_(u8, non_blocking=True)
+
+        if self.force_cpu:
+            h = h.cpu()
+
+        np_img = h.permute(1, 2, 0).contiguous().numpy()
+        enc_src = np_img[..., ::-1]  # RGB to BGR for OpenCV
+
+        # Get current dimensions
+        height, width = enc_src.shape[:2]
+
+        # Calculate new dimensions maintaining aspect ratio, max 320x320
+        max_size = 320
+        if width > height:
+            new_width = min(width, max_size)
+            new_height = int(height * new_width / width)
+        else:
+            new_height = min(height, max_size)
+            new_width = int(width * new_height / height)
+
+        # Resize image
+        if new_width != width or new_height != height:
+            enc_src = cv2.resize(
+                enc_src,
+                (new_width, new_height),
+                interpolation=cv2.INTER_AREA,
+            )
+
+        # Progressive JPEG quality reduction until <200KB
+        quality = 80
+        while quality >= 30:
+            params = [cv2.IMWRITE_JPEG_QUALITY, quality]
+            ok, enc = cv2.imencode(".jpg", enc_src, params)
+            if not ok:
+                raise RuntimeError("cv2.imencode failed for thumbnail")
+
+            if len(enc) < 200 * 1024:  # Less than 200KB
+                break
+            quality -= 5
 
         buf = io.BytesIO(enc.tobytes())
         buf.seek(0)
