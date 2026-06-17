@@ -127,7 +127,12 @@ class TelegramSend:
         return resp.json()
 
     def _get_tensors(self, *args: Optional[List[Tensor]]) -> List[Tensor]:
-        return [x[0] for x in args if x is not None]
+        tensors = [t for batch in args if batch is not None for t in batch]
+        if len(tensors) > 10:
+            raise ValueError(
+                f"Telegram supports max 10 media per group, got {len(tensors)}"
+            )
+        return tensors
 
     def _tensors_to_media_group(
         self,
